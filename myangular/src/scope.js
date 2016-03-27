@@ -1,5 +1,6 @@
 'ust strict';
 var _ = require('lodash');
+var j = 0;
 function Scope(){
 	this.$$watchers = [];
 	this.$$lastDirtyWatch = null;
@@ -40,7 +41,9 @@ Scope.prototype.$digest = function() {
 		this.$$flushApplyAsync();
 	}
 	do {
+		//console.log('handleconsoleT1'+j++);
 		while (this.$$asyncQueue.length) {
+			//console.log('handleconsoleT2'+j++);
 			try {
 				var asyncTask = this.$$asyncQueue.shift();
 				asyncTask.scope.$eval(asyncTask.expression);
@@ -69,18 +72,19 @@ Scope.prototype.$$digestOnce = function() {
 	_.forEachRight(this.$$watchers, function(watcher) {
 		try {
 			if (watcher) {
+				//console.log('handleconsoleT3('+watcher.watchFn(self)+')'+j++  );
 				newValue = watcher.watchFn(self);
 				oldValue = watcher.last;
 				if (!self.$$areEqual(newValue, oldValue, watcher.valueEq)) {
 					self.$$lastDirtyWatch = watcher;
 					watcher.last = (watcher.valueEq ? _.cloneDeep(newValue) : newValue);
-					watcher.listenerFn(newValue,
-						(oldValue === initWatchVal ? newValue : oldValue),
-						self);
+					watcher.listenerFn(newValue,(oldValue === initWatchVal ? newValue : oldValue),self);
 					dirty = true;
 				} else if (self.$$lastDirtyWatch === watcher) {
 					return false;
 				}
+			}else{
+				console.log('watch none');
 			}
 		} catch (e) {
 			console.error(e);
@@ -113,8 +117,11 @@ Scope.prototype.$apply = function(expr) {
 
 Scope.prototype.$evalAsync = function(expr) {
 	var self = this;
+	//console.log('handleconsoleT4'+j++);
 	if (!self.$$phase && !self.$$asyncQueue.length) {
+		//console.log('handleconsoleT5'+j++);
 		setTimeout(function() {
+			//console.log('handleconsoleT6'+j++);
 			if (self.$$asyncQueue.length) {
 				self.$digest();
 			}
@@ -158,6 +165,52 @@ Scope.prototype.$$flushApplyAsync = function() {
 
 Scope.prototype.$$postDigest = function(fn) {
 	this.$$postDigestQueue.push(fn);
+};
+
+Scope.prototype.$watchGroup = function(watchFns, listenerFn) {
+	var self = this;
+	var newValues = new Array(watchFns.length);
+	var oldValues = new Array(watchFns.length);
+	var changeReactionScheduled = false;
+	var firstRun = true;
+
+	if (watchFns.length === 0) {
+		var shouldCall = true;
+		self.$evalAsync(function() {
+			if (shouldCall) {
+				listenerFn(newValues, newValues, self);
+			}
+		});
+		return function() {
+			shouldCall = false;
+		};
+	}
+
+	function watchGroupListener() {
+		if (firstRun) {
+			firstRun = false;
+			listenerFn(newValues, newValues, self);
+		} else {
+			listenerFn(newValues, oldValues, self);
+		}
+		changeReactionScheduled = false;
+	}
+
+	var destroyFunctions = _.map(watchFns, function(watchFn, i) {
+		return self.$watch(watchFn, function(newValue, oldValue) {
+			newValues[i] = newValue;
+			oldValues[i] = oldValue;
+			if (!changeReactionScheduled) {
+				changeReactionScheduled = true;
+				self.$evalAsync(watchGroupListener);
+			}
+		});
+	});
+	return function() {
+		_.forEach(destroyFunctions, function(destroyFunction) {
+			destroyFunction();
+		});
+	};
 };
 
 module.exports = Scope;
